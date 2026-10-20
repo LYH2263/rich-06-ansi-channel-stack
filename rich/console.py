@@ -35,6 +35,7 @@ from rich._null_file import NULL_FILE
 
 from . import errors, themes
 from ._emoji_replace import _emoji_replace
+from .channel import ChannelPolicy, ChannelStack
 from ._export_format import CONSOLE_HTML_FORMAT, CONSOLE_SVG_FORMAT
 from ._fileno import get_fileno
 from ._log_render import FormatTimeCallable, LogRender
@@ -361,6 +362,31 @@ class ThemeContext:
         self.console.pop_theme()
 
 
+class ChannelPolicyContext:
+    """A context manager to use a temporary inbound ANSI channel policy.
+
+    See :meth:`~rich.console.Console.use_channel_policy` for usage. The policy
+    is always popped on exit (including when an exception is raised), and the
+    channel stack is independent of the theme stack.
+    """
+
+    def __init__(self, console: "Console", policy: ChannelPolicy) -> None:
+        self.console = console
+        self.policy = policy
+
+    def __enter__(self) -> "ChannelPolicyContext":
+        self.console.push_channel_policy(self.policy)
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
+        self.console.pop_channel_policy()
+
+
 class PagerContext:
     """A context manager that 'pages' content. See :meth:`~rich.console.Console.pager` for usage."""
 
@@ -537,6 +563,7 @@ class ConsoleThreadLocals(threading.local):
     """Thread local values for Console context."""
 
     theme_stack: ThemeStack
+    channel_stack: ChannelStack = field(default_factory=ChannelStack)
     buffer: List[Segment] = field(default_factory=list)
     buffer_index: int = 0
 
@@ -786,6 +813,20 @@ class Console:
         """Get the thread local theme stack."""
         return self._thread_locals.theme_stack
 
+    @property
+    def _channel_stack(self) -> ChannelStack:
+        """Get the thread local inbound ANSI channel policy stack."""
+        return self._thread_locals.channel_stack
+
+    @property
+    def channel_policy(self) -> ChannelPolicy:
+        """The inbound ANSI channel policy currently in effect.
+
+        Returns the top of the channel policy stack, or the default policy
+        (style enabled, control and title disabled) when nothing is pushed.
+        """
+        return self._channel_stack.top
+
     def _detect_color_system(self) -> Optional[ColorSystem]:
         """Detect color system from env vars."""
         if self.is_jupyter:
@@ -904,6 +945,37 @@ class Console:
             ThemeContext: [description]
         """
         return ThemeContext(self, theme, inherit)
+
+    def push_channel_policy(self, policy: ChannelPolicy) -> None:
+        """Push an inbound ANSI channel policy on to the top of the stack.
+
+        This stack is independent of the theme stack and may be interleaved
+        with :meth:`push_theme`; each stack pops in its own order. Generally
+        speaking, prefer :meth:`use_channel_policy` over calling this directly.
+
+        Args:
+            policy (ChannelPolicy): A channel policy instance.
+        """
+        self._channel_stack.push_policy(policy)
+
+    def pop_channel_policy(self) -> None:
+        """Remove channel policy from top of stack, restoring the previous policy."""
+        self._channel_stack.pop_policy()
+
+    def use_channel_policy(self, policy: ChannelPolicy) -> ChannelPolicyContext:
+        """Use a different inbound ANSI channel policy for the duration of the
+        context manager.
+
+        The policy is popped again even if an exception is raised inside the
+        context.
+
+        Args:
+            policy (ChannelPolicy): A channel policy instance.
+
+        Returns:
+            ChannelPolicyContext: A context manager.
+        """
+        return ChannelPolicyContext(self, policy)
 
     @property
     def color_system(self) -> Optional[str]:

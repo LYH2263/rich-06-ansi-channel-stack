@@ -565,7 +565,11 @@ class Segment(NamedTuple):
 
         _Segment = Segment
         for segment in iter_segments:
-            if last_segment.style == segment.style and not segment.control:
+            if (
+                last_segment.style == segment.style
+                and not segment.control
+                and not last_segment.control
+            ):
                 last_segment = _Segment(
                     last_segment.text + segment.text, last_segment.style
                 )
